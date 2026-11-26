@@ -1,6 +1,8 @@
 package co.id.rmms.printbridge
 import co.id.rmms.printbridge.data.*
 import co.id.rmms.printbridge.printer.*
+import co.id.rmms.printbridge.updater.AppUpdater
+import co.id.rmms.printbridge.updater.ReleaseInfo
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -559,6 +561,64 @@ fun HomeScreen(
         }
     }
 
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var availableRelease by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var downloadProgress by remember { mutableStateOf<Int?>(null) }
+
+    availableRelease?.let { release ->
+        AlertDialog(
+            onDismissRequest = { if (downloadProgress == null) availableRelease = null },
+            title = { Text("Update Tersedia (v${release.versionName})", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(release.releaseNotes, style = MaterialTheme.typography.bodySmall)
+                    downloadProgress?.let { progress ->
+                        LinearProgressIndicator(
+                            progress = { progress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("Mengunduh APK: $progress%", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = downloadProgress == null,
+                    onClick = {
+                        scope.launch {
+                            downloadProgress = 0
+                            val downloadRes = AppUpdater.downloadApk(
+                                context = context,
+                                downloadUrl = release.apkDownloadUrl,
+                                onProgress = { downloadProgress = it }
+                            )
+                            downloadProgress = null
+                            downloadRes.onSuccess { apkFile ->
+                                availableRelease = null
+                                AppUpdater.installApk(context, apkFile)
+                            }.onFailure { err ->
+                                Toast.makeText(
+                                    context,
+                                    "Gagal mengunduh: ${err.localizedMessage}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                ) {
+                    Text("Update")
+                }
+            },
+            dismissButton = {
+                if (downloadProgress == null) {
+                    TextButton(onClick = { availableRelease = null }) {
+                        Text("Nanti")
+                    }
+                }
+            }
+        )
+    }
+
     LaunchedEffect(Unit) {
         val requiredPermissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -598,6 +658,37 @@ fun HomeScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                },
+                actions = {
+                    TextButton(
+                        enabled = !isCheckingUpdate,
+                        onClick = {
+                            scope.launch {
+                                isCheckingUpdate = true
+                                val result = AppUpdater.checkLatestRelease(appVersion)
+                                isCheckingUpdate = false
+                                result.onSuccess { release ->
+                                    if (release != null) {
+                                        availableRelease = release
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "Aplikasi sudah versi terbaru (v$appVersion)",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }.onFailure { err ->
+                                    Toast.makeText(
+                                        context,
+                                        "Gagal cek update: ${err.localizedMessage}",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    ) {
+                        Text(if (isCheckingUpdate) "Mengecek..." else "Cek Update")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
